@@ -1,3 +1,5 @@
+'use client';
+
 import { useState } from 'react';
 import { useAuth } from '../auth-context';
 
@@ -13,21 +15,24 @@ export default function LoginPage() {
   async function submit() {
     setLoading(true);
     setError('');
+
     try {
       const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register';
-      const body = mode === 'login' ? { email, password } : { username, email, password };
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/` + endpoint, {
+      const payload = mode === 'login' ? { email, password } : { username, email, password };
+
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${endpoint}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
+        body: JSON.stringify(payload)
       });
 
       const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Auth failed');
+      if (!res.ok) throw new Error(data.error || 'Authentication failed');
+
       login(data.token, data.user);
       window.location.href = '/dashboard';
     } catch (err: any) {
-      setError(err.message || 'Auth failed');
+      setError(err.message || 'Authentication failed');
     } finally {
       setLoading(false);
     }
@@ -61,7 +66,10 @@ export default function LoginPage() {
       </button>
 
       <div style={{ marginTop: 16, textAlign: 'center' }}>
-        <button onClick={() => setMode(mode === 'login' ? 'register' : 'login')} style={{ background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer' }}>
+        <button
+          onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
+          style={{ background: 'transparent', border: 'none', color: '#2563eb', cursor: 'pointer' }}
+        >
           {mode === 'login' ? 'Need an account? Register' : 'Already have an account? Login'}
         </button>
       </div>
@@ -69,5 +77,20 @@ export default function LoginPage() {
   );
 }
 
-const inputStyle = { width: '100%', padding: 12, borderRadius: 8, border: '1px solid #d1d5db', marginTop: 8 } as const;
-const buttonStyle = { width: '100%', padding: '12px 18px', background: '#25d366', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer' } as const;
+const inputStyle = {
+  width: '100%',
+  padding: 12,
+  borderRadius: 8,
+  border: '1px solid #d1d5db',
+  marginTop: 8
+} as const;
+
+const buttonStyle = {
+  width: '100%',
+  padding: '12px 18px',
+  background: '#25d366',
+  color: '#fff',
+  border: 'none',
+  borderRadius: 8,
+  cursor: 'pointer'
+} as const;

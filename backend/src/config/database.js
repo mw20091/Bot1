@@ -6,9 +6,12 @@ let pool;
 
 export async function initializeDatabase() {
   const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error('DATABASE_URL required');
+  if (!connectionString) {
+    throw new Error('DATABASE_URL is required');
+  }
 
   pool = new Pool({ connectionString });
+
   try {
     const client = await pool.connect();
     client.release();
@@ -22,10 +25,10 @@ export async function initializeDatabase() {
 }
 
 async function createTables() {
-  const tables = [
+  const queries = [
     `CREATE TABLE IF NOT EXISTS users (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      username VARCHAR(255) UNIQUE NOT NULL,
+      username VARCHAR(255) NOT NULL,
       email VARCHAR(255) UNIQUE NOT NULL,
       password_hash VARCHAR(255) NOT NULL,
       created_at TIMESTAMP DEFAULT NOW(),
@@ -39,7 +42,7 @@ async function createTables() {
       whatsapp_jid VARCHAR(255),
       created_at TIMESTAMP DEFAULT NOW(),
       updated_at TIMESTAMP DEFAULT NOW(),
-      UNIQUE(user_id, session_name)
+      UNIQUE (user_id, session_name)
     )`,
     `CREATE TABLE IF NOT EXISTS chats (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -50,7 +53,7 @@ async function createTables() {
       last_message TEXT,
       last_message_time BIGINT,
       created_at TIMESTAMP DEFAULT NOW(),
-      UNIQUE(session_id, chat_jid)
+      UNIQUE (session_id, chat_jid)
     )`,
     `CREATE TABLE IF NOT EXISTS messages (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -74,11 +77,17 @@ async function createTables() {
     )`
   ];
 
-  for (const sql of tables) {
+  for (const sql of queries) {
     await pool.query(sql);
   }
+
   logger.info('Database tables initialized');
 }
 
-export function getPool() { return pool; }
-export async function query(sql, params = []) { return pool.query(sql, params); }
+export function getPool() {
+  return pool;
+}
+
+export async function query(sql, params = []) {
+  return pool.query(sql, params);
+}

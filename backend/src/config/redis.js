@@ -11,7 +11,22 @@ export async function initializeRedis() {
   logger.info('Redis connected');
 }
 
-export function getRedis() { return redisClient; }
-export async function cacheSet(key, data, ttl = 3600) { if (redisClient) await redisClient.setEx(key, ttl, JSON.stringify(data)); }
-export async function cacheGet(key) { if (!redisClient) return null; const value = await redisClient.get(key); return value ? JSON.parse(value) : null; }
-export async function cacheDel(key) { if (redisClient) await redisClient.del(key); }
+export function getRedis() {
+  return redisClient;
+}
+
+export async function cacheSet(key, value, ttl = 3600) {
+  if (!redisClient) return;
+  await redisClient.setEx(key, ttl, JSON.stringify(value));
+}
+
+export async function cacheGet(key) {
+  if (!redisClient) return null;
+  const value = await redisClient.get(key);
+  return value ? JSON.parse(value) : null;
+}
+
+export async function cacheDel(key) {
+  if (!redisClient) return;
+  await redisClient.del(key);
+}

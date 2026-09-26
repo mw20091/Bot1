@@ -1,4 +1,4 @@
-import { useEffect, useState, createContext, useContext } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 
 const AuthContext = createContext<any>(null);
 
@@ -12,23 +12,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    const savedToken = localStorage.getItem('wa_token');
-    const savedUser = localStorage.getItem('wa_user');
-    if (savedToken && savedUser) {
-      setToken(savedToken);
-      setUser(JSON.parse(savedUser));
+    const storedToken = localStorage.getItem('wa_token');
+    const storedUser = localStorage.getItem('wa_user');
+
+    if (storedToken && storedUser) {
+      setToken(storedToken);
+      setUser(JSON.parse(storedUser));
     }
+
     setReady(true);
   }, []);
 
   useEffect(() => {
-    if (token) localStorage.setItem('wa_token', token);
-    else localStorage.removeItem('wa_token');
+    if (token) {
+      localStorage.setItem('wa_token', token);
+    } else {
+      localStorage.removeItem('wa_token');
+    }
   }, [token]);
 
   useEffect(() => {
-    if (user) localStorage.setItem('wa_user', JSON.stringify(user));
-    else localStorage.removeItem('wa_user');
+    if (user) {
+      localStorage.setItem('wa_user', JSON.stringify(user));
+    } else {
+      localStorage.removeItem('wa_user');
+    }
   }, [user]);
 
   const login = (nextToken: string, nextUser: any) => {
