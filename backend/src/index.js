@@ -15,7 +15,7 @@ import { logger } from './utils/logger.js';
 dotenv.config();
 
 const app = express();
-const PORT = Number(process.env.PORT || 5000);
+const PORT = Number(process.env.PORT || 3000);
 
 app.use(helmet());
 app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', credentials: true }));
@@ -23,7 +23,12 @@ app.use(express.json({ limit: '2mb' }));
 app.use(pinoHttp({ logger }));
 
 app.get('/health', (_req, res) => {
-  res.json({ ok: true, timestamp: new Date().toISOString() });
+  res.json({
+    ok: true,
+    database: !!process.env.DATABASE_URL,
+    redis: !!process.env.REDIS_URL,
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.use('/api/auth', authRoutes);
@@ -35,8 +40,18 @@ app.use(errorHandler);
 
 async function start() {
   try {
-    await initializeDatabase();
-    await initializeRedis();
+    if (process.env.DATABASE_URL) {
+      await initializeDatabase();
+    } else {
+      logger.warn('DATABASE_URL not set. Skipping database initialization.');
+    }
+
+    if (process.env.REDIS_URL) {
+      await initializeRedis();
+    } else {
+      logger.warn('REDIS_URL not set. Skipping Redis initialization.');
+    }
+
     logger.info(`API listening on port ${PORT}`);
     app.listen(PORT);
   } catch (error) {
