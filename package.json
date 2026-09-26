@@ -6,6 +6,8 @@
     "build": "npm --prefix backend install",
     "start": "npm --prefix backend start",
     "dev": "npm --prefix backend run dev"
+  },
+  "engines": {
+    "node": "18.x"
   }
 }
-{

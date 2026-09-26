@@ -1,0 +1,18 @@
+{
+  "buildCommand": "cd backend && npm install",
+  "startCommand": "cd backend && npm start",
+  "envVars": [
+    {
+      "key": "NODE_ENV",
+      "value": "production"
+    },
+    {
+      "key": "JWT_SECRET",
+      "value": "change-me-to-secure-key"
+    },
+    {
+      "key": "PORT",
+      "value": "3000"
+    }
+  ]
+}
