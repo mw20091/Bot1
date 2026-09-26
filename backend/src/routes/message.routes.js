@@ -1,28 +1,8 @@
 import express from 'express';
-import { query } from '../config/database.js';
-import { fetchChats } from '../services/whatsapp.service.js';
-
+import { sendText, readMessages, react, typing } from '../services/whatsapp.service.js';
 const router = express.Router();
-
-router.get('/:sessionId', async (req, res, next) => {
-  try {
-    const { sessionId } = req.params;
-    const chats = await fetchChats(sessionId);
-    res.json({ chats });
-  } catch (error) {
-    next(error);
-  }
-});
-
-router.get('/:sessionId/:jid/messages', async (req, res, next) => {
-  try {
-    const { sessionId, jid } = req.params;
-    const { fetchChatMessages } = await import('../services/whatsapp.service.js');
-    const messages = await fetchChatMessages(sessionId, jid);
-    res.json({ messages });
-  } catch (error) {
-    next(error);
-  }
-});
-
+router.post('/send', async (req, res, next) => { try { const { sessionId, jid, text } = req.body; if (!sessionId || !jid || !text) return res.status(400).json({ error: 'sessionId, jid and text are required' }); await sendText(sessionId, jid, text); res.json({ ok: true }); } catch (e) { next(e); } });
+router.post('/read', async (req, res, next) => { try { await readMessages(req.body.sessionId, req.body.jid, req.body.messageIds || []); res.json({ ok: true }); } catch (e) { next(e); } });
+router.post('/react', async (req, res, next) => { try { await react(req.body.sessionId, req.body.jid, req.body.messageId, req.body.emoji || '👍'); res.json({ ok: true }); } catch (e) { next(e); } });
+router.post('/typing', async (req, res, next) => { try { await typing(req.body.sessionId, req.body.jid, req.body.enabled !== false); res.json({ ok: true }); } catch (e) { next(e); } });
 export default router;
