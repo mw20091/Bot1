@@ -1,0 +1,13 @@
+# Railway uses the repository root as the service directory.
+# The commands below delegate build/start to the backend monorepo package.
+
+[build]
+builder = "RAILPACK"
+buildCommand = "npm --prefix backend install"
+
+[deploy]
+startCommand = "npm --prefix backend start"
+healthcheckPath = "/health"
+healthcheckTimeout = 120
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

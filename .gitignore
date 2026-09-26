@@ -1,10 +1,6 @@
-# .gitignore
 node_modules
 .env
-.env.local
+.env.*
 .next
-.DS_Store
-*.log
+.sessions
 backend/.sessions
-backend/data
-frontend/.next
