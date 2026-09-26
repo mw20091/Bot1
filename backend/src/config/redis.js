@@ -1,72 +1,128 @@
-import redis from 'redis';
+import pkg from 'pg';
 import { logger } from '../utils/logger.js';
 
-let redisClient;
+const { Pool } = pkg;
+let pool;
 
-export async function initializeRedis() {
-  const redisUrl = process.env.REDIS_URL || (
-    `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || 6379}`
-  );
+export async function initializeDatabase() {
+  const connectionString = process.env.DATABASE_URL || `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`;
 
-  redisClient = redis.createClient({
-    url: redisUrl,
-    socket: {
-      reconnectStrategy: (retries) => Math.min(retries * 50, 500)
-    }
+  pool = new Pool({
+    connectionString,
+    max: 20,
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 2000,
   });
 
-  redisClient.on('error', (err) => logger.error('Redis error:', err));
-  redisClient.on('connect', () => logger.info('Redis connected'));
-  redisClient.on('reconnecting', () => logger.info('Redis reconnecting...'));
-
   try {
-    await redisClient.connect();
-    logger.info('Redis connection successful');
+    const client = await pool.connect();
+    client.release();
+    logger.info('Database connected');
   } catch (error) {
-    logger.error('Redis connection failed:', error);
+    logger.error('Database connection failed', error);
     throw error;
   }
+
+  await createTables();
 }
 
-export function getRedis() {
-  return redisClient;
-}
+async function createTables() {
+  const queries = [
+    `CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      username VARCHAR(255) UNIQUE NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_name VARCHAR(255) NOT NULL,
+      whatsapp_jid VARCHAR(255),
+      status VARCHAR(50) DEFAULT 'disconnected',
+      device_info JSONB,
+      auth_credentials JSONB,
+      is_active BOOLEAN DEFAULT false,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS chats (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      chat_jid VARCHAR(255) NOT NULL,
+      chat_name VARCHAR(255),
+      chat_type VARCHAR(20),
+      last_message TEXT,
+      last_message_timestamp BIGINT,
+      unread_count INTEGER DEFAULT 0,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(session_id, chat_jid)
+    )`,
+    `CREATE TABLE IF NOT EXISTS messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
+      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      sender_jid VARCHAR(255),
+      receiver_jid VARCHAR(255),
+      message_text TEXT,
+      message_type VARCHAR(50),
+      media_url TEXT,
+      timestamp BIGINT,
+      is_from_me BOOLEAN DEFAULT false,
+      read_at TIMESTAMP,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS bot_settings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id UUID NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+      auto_read BOOLEAN DEFAULT true,
+      auto_reactions BOOLEAN DEFAULT true,
+      auto_status_like BOOLEAN DEFAULT true,
+      auto_typing BOOLEAN DEFAULT true,
+      reaction_emojis VARCHAR(255) DEFAULT '👍😂❤️😮😢',
+      typing_delay_ms INTEGER DEFAULT 1000,
+      auto_reply_enabled BOOLEAN DEFAULT false,
+      auto_reply_template TEXT,
+      excluded_chats JSONB DEFAULT '[]',
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS auto_reply_rules (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      trigger_keyword VARCHAR(255) NOT NULL,
+      reply_message TEXT NOT NULL,
+      is_regex BOOLEAN DEFAULT false,
+      enabled BOOLEAN DEFAULT true,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`,
+    `CREATE TABLE IF NOT EXISTS activity_logs (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      action VARCHAR(255) NOT NULL,
+      action_type VARCHAR(50),
+      details JSONB,
+      status VARCHAR(50),
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )`
+  ];
 
-export async function cacheSet(key, value, ttl = 3600) {
-  try {
-    if (ttl) {
-      await redisClient.setEx(key, ttl, JSON.stringify(value));
-    } else {
-      await redisClient.set(key, JSON.stringify(value));
-    }
-  } catch (error) {
-    logger.error('Cache set error:', error);
+  for (const query of queries) {
+    await pool.query(query);
   }
+
+  logger.info('Database tables initialized');
 }
 
-export async function cacheGet(key) {
-  try {
-    const data = await redisClient.get(key);
-    return data ? JSON.parse(data) : null;
-  } catch (error) {
-    logger.error('Cache get error:', error);
-    return null;
-  }
+export function getPool() {
+  return pool;
 }
 
-export async function cacheDel(key) {
-  try {
-    await redisClient.del(key);
-  } catch (error) {
-    logger.error('Cache delete error:', error);
-  }
-}
-
-export async function cacheExists(key) {
-  try {
-    return await redisClient.exists(key);
-  } catch (error) {
-    logger.error('Cache exists error:', error);
-    return false;
-  }
+export async function query(text, params) {
+  return pool.query(text, params);
 }

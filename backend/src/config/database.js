@@ -1,193 +1,64 @@
-import pkg from 'pg';
-import { logger } from '../utils/logger.js';
+import express from 'express';
+import cors from 'cors';
+import helmet from 'helmet';
+import dotenv from 'dotenv';
+import pinoHttp from 'pino-http';
+import { initializeDatabase } from './config/database.js';
+import { initializeRedis } from './config/redis.js';
+import authRoutes from './routes/auth.routes.js';
+import botRoutes from './routes/bot.routes.js';
+import sessionRoutes from './routes/session.routes.js';
+import messageRoutes from './routes/message.routes.js';
+import chatRoutes from './routes/chat.routes.js';
+import settingsRoutes from './routes/settings.routes.js';
+import { errorHandler } from './middleware/errorHandler.js';
+import { logger } from './utils/logger.js';
 
-const { Pool } = pkg;
+dotenv.config();
 
-let pool;
+const app = express();
+const PORT = process.env.PORT || 5000;
 
-export async function initializeDatabase() {
-  const connectionString = process.env.DATABASE_URL || (
-    `postgresql://${process.env.DB_USER}:${process.env.DB_PASSWORD}@${process.env.DB_HOST}:${process.env.DB_PORT}/${process.env.DB_NAME}`
-  );
+app.use(helmet());
+app.use(cors({
+  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  credentials: true,
+}));
+app.use(express.json({ limit: '50mb' }));
+app.use(express.urlencoded({ limit: '50mb', extended: true }));
+app.use(pinoHttp({ logger }));
 
-  pool = new Pool({
-    connectionString,
-    max: 20,
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 2000,
-  });
+app.get('/health', (req, res) => {
+  res.json({ status: 'OK', timestamp: new Date().toISOString() });
+});
 
-  // Test connection
+app.use('/api/auth', authRoutes);
+app.use('/api/bot', botRoutes);
+app.use('/api/session', sessionRoutes);
+app.use('/api/message', messageRoutes);
+app.use('/api/chat', chatRoutes);
+app.use('/api/settings', settingsRoutes);
+
+app.use(errorHandler);
+app.use((req, res) => {
+  res.status(404).json({ error: 'Route not found' });
+});
+
+async function start() {
   try {
-    const client = await pool.connect();
-    logger.info('Database connection successful');
-    client.release();
+    logger.info('Initializing services...');
+    await initializeDatabase();
+    await initializeRedis();
+
+    app.listen(PORT, () => {
+      logger.info(`Server running on port ${PORT}`);
+    });
   } catch (error) {
-    logger.error('Database connection failed:', error);
-    throw error;
-  }
-
-  // Create tables
-  await createTables();
-}
-
-async function createTables() {
-  const queries = [
-    // Users table
-    `CREATE TABLE IF NOT EXISTS users (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      username VARCHAR(255) UNIQUE NOT NULL,
-      email VARCHAR(255) UNIQUE NOT NULL,
-      password_hash VARCHAR(255) NOT NULL,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`,
-
-    // Sessions table
-    `CREATE TABLE IF NOT EXISTS sessions (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-      whatsapp_jid VARCHAR(255) UNIQUE,
-      session_name VARCHAR(255) NOT NULL,
-      status VARCHAR(50) DEFAULT 'disconnected',
-      device_info JSONB,
-      auth_credentials JSONB,
-      is_active BOOLEAN DEFAULT false,
-      last_connected TIMESTAMP,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`,
-
-    // Chats table
-    `CREATE TABLE IF NOT EXISTS chats (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      chat_jid VARCHAR(255) NOT NULL,
-      chat_name VARCHAR(255),
-      chat_type VARCHAR(20),
-      last_message TEXT,
-      last_message_timestamp BIGINT,
-      unread_count INTEGER DEFAULT 0,
-      pinned BOOLEAN DEFAULT false,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(session_id, chat_jid)
-    )`,
-
-    // Messages table
-    `CREATE TABLE IF NOT EXISTS messages (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      chat_id UUID NOT NULL REFERENCES chats(id) ON DELETE CASCADE,
-      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      message_key_id VARCHAR(255),
-      sender_jid VARCHAR(255),
-      receiver_jid VARCHAR(255),
-      message_text TEXT,
-      message_type VARCHAR(50),
-      media_url TEXT,
-      media_type VARCHAR(50),
-      timestamp BIGINT,
-      is_from_me BOOLEAN DEFAULT false,
-      read_at TIMESTAMP,
-      reacted BOOLEAN DEFAULT false,
-      reaction_emoji VARCHAR(10),
-      forwarded BOOLEAN DEFAULT false,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`,
-
-    // Contacts table
-    `CREATE TABLE IF NOT EXISTS contacts (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      contact_jid VARCHAR(255) NOT NULL,
-      contact_name VARCHAR(255),
-      contact_number VARCHAR(50),
-      profile_picture_url TEXT,
-      is_bot BOOLEAN DEFAULT false,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(session_id, contact_jid)
-    )`,
-
-    // Bot Settings table
-    `CREATE TABLE IF NOT EXISTS bot_settings (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      session_id UUID NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
-      auto_read BOOLEAN DEFAULT true,
-      auto_reactions BOOLEAN DEFAULT true,
-      auto_status_like BOOLEAN DEFAULT true,
-      auto_typing BOOLEAN DEFAULT true,
-      reaction_emojis VARCHAR(255) DEFAULT '👍😂❤️😮😢',
-      typing_delay_ms INTEGER DEFAULT 1000,
-      auto_reply_enabled BOOLEAN DEFAULT false,
-      auto_reply_template TEXT,
-      excluded_chats JSONB DEFAULT '[]',
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`,
-
-    // Auto Reply Rules table
-    `CREATE TABLE IF NOT EXISTS auto_reply_rules (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      trigger_keyword VARCHAR(255) NOT NULL,
-      reply_message TEXT NOT NULL,
-      is_regex BOOLEAN DEFAULT false,
-      enabled BOOLEAN DEFAULT true,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`,
-
-    // Message Queue table
-    `CREATE TABLE IF NOT EXISTS message_queue (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      receiver_jid VARCHAR(255) NOT NULL,
-      message_text TEXT,
-      message_type VARCHAR(50),
-      status VARCHAR(50) DEFAULT 'pending',
-      retry_count INTEGER DEFAULT 0,
-      error_message TEXT,
-      scheduled_for TIMESTAMP,
-      sent_at TIMESTAMP,
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`,
-
-    // Activity Logs table
-    `CREATE TABLE IF NOT EXISTS activity_logs (
-      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
-      action VARCHAR(255) NOT NULL,
-      action_type VARCHAR(50),
-      details JSONB,
-      status VARCHAR(50),
-      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-    )`
-  ];
-
-  try {
-    for (const query of queries) {
-      await pool.query(query);
-    }
-    logger.info('All tables created successfully');
-  } catch (error) {
-    logger.error('Error creating tables:', error);
-    throw error;
+    logger.error('Failed to start server:', error);
+    process.exit(1);
   }
 }
 
-export function getPool() {
-  return pool;
-}
+start();
 
-export async function query(text, params) {
-  try {
-    const result = await pool.query(text, params);
-    return result;
-  } catch (error) {
-    logger.error('Database query error:', error);
-    throw error;
-  }
-}
+export default app;

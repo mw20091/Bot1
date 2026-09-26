@@ -1,0 +1,10 @@
+# .gitignore
+node_modules
+.env
+.env.local
+.next
+.DS_Store
+*.log
+backend/.sessions
+backend/data
+frontend/.next
