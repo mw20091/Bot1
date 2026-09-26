@@ -1,4 +1,17 @@
-/// <reference types="next" />
-/// <reference types="next/image-types/global" />
+import './globals.css';
+import { AuthProvider } from './auth-context';
 
-// NOTE: This file should not be edited.
+export const metadata = {
+  title: 'WhatsApp Bot Dashboard',
+  description: 'Personal WhatsApp bot testing dashboard'
+};
+
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <AuthProvider>{children}</AuthProvider>
+      </body>
+    </html>
+  );
+}

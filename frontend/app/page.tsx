@@ -1,15 +1,12 @@
-import './globals.css';
-import type { Metadata } from 'next';
-
-export const metadata: Metadata = {
-  title: 'WhatsApp Bot Test Dashboard',
-  description: 'Linked session testing dashboard',
-};
-
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function HomePage() {
   return (
-    <html lang="en">
-      <body>{children}</body>
-    </html>
+    <main style={{ maxWidth: 700, margin: '80px auto', textAlign: 'center', padding: 24 }}>
+      <h1>WhatsApp Bot</h1>
+      <p>Personal session dashboard for testing WhatsApp bot flows.</p>
+      <div style={{ display: 'flex', justifyContent: 'center', gap: 16, marginTop: 20, flexWrap: 'wrap' }}>
+        <a href="/login" style={{ background: '#25d366', color: '#fff', padding: '12px 18px', borderRadius: 8 }}>Login</a>
+        <a href="/dashboard" style={{ background: '#111827', color: '#fff', padding: '12px 18px', borderRadius: 8 }}>Dashboard</a>
+      </div>
+    </main>
   );
 }
