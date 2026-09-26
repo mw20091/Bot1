@@ -1,4 +1,11 @@
-export function errorHandler(error, _req, res, _next) {
-  console.error(error);
-  res.status(error.status || 500).json({ error: error.message || 'Internal server error' });
+export function errorHandler(err, req, res, next) {
+  const status = err.status || err.statusCode || 500;
+  const message = err.message || 'Internal server error';
+
+  console.error(`[${status}]`, message, err);
+
+  res.status(status).json({
+    error: message,
+    ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+  });
 }
