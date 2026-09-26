@@ -22,6 +22,21 @@ app.use(cors({ origin: process.env.FRONTEND_URL || 'http://localhost:3000', cred
 app.use(express.json({ limit: '2mb' }));
 app.use(pinoHttp({ logger }));
 
+app.get('/', (_req, res) => {
+  res.json({
+    name: 'Whatsapp Bot Backend',
+    status: 'running',
+    health: '/health',
+    api: {
+      auth: '/api/auth',
+      session: '/api/session',
+      chat: '/api/chat',
+      settings: '/api/settings'
+    },
+    timestamp: new Date().toISOString()
+  });
+});
+
 app.get('/health', (_req, res) => {
   res.json({
     ok: true,
