@@ -1,64 +1,84 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import dotenv from 'dotenv';
-import pinoHttp from 'pino-http';
-import { initializeDatabase } from './config/database.js';
-import { initializeRedis } from './config/redis.js';
-import authRoutes from './routes/auth.routes.js';
-import botRoutes from './routes/bot.routes.js';
-import sessionRoutes from './routes/session.routes.js';
-import messageRoutes from './routes/message.routes.js';
-import chatRoutes from './routes/chat.routes.js';
-import settingsRoutes from './routes/settings.routes.js';
-import { errorHandler } from './middleware/errorHandler.js';
-import { logger } from './utils/logger.js';
+import pg from 'pg';
+import { logger } from '../utils/logger.js';
 
-dotenv.config();
+const { Pool } = pg;
+let pool;
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+export async function initializeDatabase() {
+  const connectionString = process.env.DATABASE_URL;
+  if (!connectionString) throw new Error('DATABASE_URL required');
 
-app.use(helmet());
-app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
-  credentials: true,
-}));
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
-app.use(pinoHttp({ logger }));
-
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date().toISOString() });
-});
-
-app.use('/api/auth', authRoutes);
-app.use('/api/bot', botRoutes);
-app.use('/api/session', sessionRoutes);
-app.use('/api/message', messageRoutes);
-app.use('/api/chat', chatRoutes);
-app.use('/api/settings', settingsRoutes);
-
-app.use(errorHandler);
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
-});
-
-async function start() {
+  pool = new Pool({ connectionString });
   try {
-    logger.info('Initializing services...');
-    await initializeDatabase();
-    await initializeRedis();
-
-    app.listen(PORT, () => {
-      logger.info(`Server running on port ${PORT}`);
-    });
+    const client = await pool.connect();
+    client.release();
+    logger.info('PostgreSQL connected');
   } catch (error) {
-    logger.error('Failed to start server:', error);
-    process.exit(1);
+    logger.error('PostgreSQL connection failed', error);
+    throw error;
   }
+
+  await createTables();
 }
 
-start();
+async function createTables() {
+  const tables = [
+    `CREATE TABLE IF NOT EXISTS users (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      username VARCHAR(255) UNIQUE NOT NULL,
+      email VARCHAR(255) UNIQUE NOT NULL,
+      password_hash VARCHAR(255) NOT NULL,
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS sessions (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      session_name VARCHAR(255) NOT NULL,
+      status VARCHAR(50) DEFAULT 'disconnected',
+      whatsapp_jid VARCHAR(255),
+      created_at TIMESTAMP DEFAULT NOW(),
+      updated_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(user_id, session_name)
+    )`,
+    `CREATE TABLE IF NOT EXISTS chats (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      chat_jid VARCHAR(255) NOT NULL,
+      chat_name VARCHAR(255),
+      unread_count INTEGER DEFAULT 0,
+      last_message TEXT,
+      last_message_time BIGINT,
+      created_at TIMESTAMP DEFAULT NOW(),
+      UNIQUE(session_id, chat_jid)
+    )`,
+    `CREATE TABLE IF NOT EXISTS messages (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+      chat_jid VARCHAR(255) NOT NULL,
+      from_me BOOLEAN DEFAULT false,
+      sender_jid VARCHAR(255),
+      text TEXT,
+      timestamp BIGINT,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`,
+    `CREATE TABLE IF NOT EXISTS bot_settings (
+      id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+      session_id UUID NOT NULL UNIQUE REFERENCES sessions(id) ON DELETE CASCADE,
+      auto_read BOOLEAN DEFAULT true,
+      auto_reactions BOOLEAN DEFAULT false,
+      auto_typing BOOLEAN DEFAULT true,
+      reaction_emojis VARCHAR(255) DEFAULT '👍,😂,❤️,😮',
+      typing_delay_ms INTEGER DEFAULT 1000,
+      created_at TIMESTAMP DEFAULT NOW()
+    )`
+  ];
 
-export default app;
+  for (const sql of tables) {
+    await pool.query(sql);
+  }
+  logger.info('Database tables initialized');
+}
+
+export function getPool() { return pool; }
+export async function query(sql, params = []) { return pool.query(sql, params); }

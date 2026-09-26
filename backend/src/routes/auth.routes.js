@@ -1,172 +1,60 @@
-import { Boom } from '@hapi/boom';
-import makeWASocket, {
-  Browsers,
-  DisconnectReason,
-  fetchLatestBaileysVersion,
-  useMultiFileAuthState,
-} from '@whiskeysockets/baileys';
-import fs from 'fs';
-import path from 'path';
+import express from 'express';
+import jwt from 'jsonwebtoken';
+import bcryptjs from 'bcryptjs';
+import { query } from '../config/database.js';
 import { logger } from '../utils/logger.js';
 
-const sessions = new Map();
+const router = express.Router();
 
-export function getSessionSocket(sessionId) {
-  return sessions.get(sessionId) || null;
-}
+router.post('/register', async (req, res, next) => {
+  try {
+    const { username, email, password } = req.body;
+    if (!username || !email || !password) return res.status(400).json({ error: 'username, email, password required' });
 
-export function getSessionMeta(sessionId) {
-  return sessions.get(sessionId)?.meta || null;
-}
+    const hash = await bcryptjs.hash(password, 10);
+    const result = await query(
+      'INSERT INTO users (username, email, password_hash) VALUES ($1, $2, $3) RETURNING id, username, email',
+      [username, email, hash]
+    );
 
-export async function connectSession(sessionId) {
-  const dir = path.join(process.cwd(), '.sessions', sessionId);
-  fs.mkdirSync(dir, { recursive: true });
-
-  const { state, saveCreds } = await useMultiFileAuthState(dir);
-  const { version } = await fetchLatestBaileysVersion();
-
-  const sock = makeWASocket({
-    version,
-    printQRInTerminal: false,
-    auth: state,
-    browser: Browsers.ubuntu('Chrome'),
-  });
-
-  sessions.set(sessionId, { socket: sock, meta: { connected: false, qr: null } });
-
-  sock.ev.on('connection.update', async (update) => {
-    const { connection, lastDisconnect, qr } = update;
-
-    if (qr) {
-      const meta = sessions.get(sessionId);
-      if (meta) meta.meta.qr = qr;
-    }
-
-    if (connection === 'open') {
-      const meta = sessions.get(sessionId);
-      if (meta) meta.meta.connected = true;
-      logger.info(`Session connected: ${sessionId}`);
-    }
-
-    if (connection === 'close') {
-      const shouldReconnect = (lastDisconnect?.error || new Boom('Unknown')).output?.statusCode !== DisconnectReason.loggedOut;
-      if (shouldReconnect) {
-        logger.warn(`Reconnect needed for session: ${sessionId}`);
-      }
-    }
-  });
-
-  sock.ev.on('creds.update', saveCreds);
-
-  sock.ev.on('messages.upsert', async (event) => {
-    const { messages } = event;
-    for (const message of messages) {
-      if (!message.message || message.key.fromMe) continue;
-      logger.info(`Incoming message from ${message.key.remoteJid}`);
-    }
-  });
-
-  return { sessionId, qr: null, connected: false };
-}
-
-export async function getQRForSession(sessionId) {
-  const session = sessions.get(sessionId);
-  if (!session) return { qr: null, connected: false };
-  return { qr: session.meta.qr, connected: session.meta.connected };
-}
-
-export async function sendTextMessage(sessionId, jid, text) {
-  const session = sessions.get(sessionId);
-  if (!session) throw new Error('Session not found');
-  const { socket } = session;
-
-  await socket.sendMessage(jid, { text });
-  return { ok: true };
-}
-
-export async function fetchChats(sessionId) {
-  const session = sessions.get(sessionId);
-  if (!session) throw new Error('Session not found');
-
-  const { socket } = session;
-  const chats = await socket.store?.chats?.all?.();
-  return chats || [];
-}
-
-export async function fetchChatMessages(sessionId, jid) {
-  const session = sessions.get(sessionId);
-  if (!session) throw new Error('Session not found');
-
-  const { socket } = session;
-  const messages = await socket.store?.messages?.[jid]?.all?.() || [];
-  return messages.map((m) => ({
-    id: m.key.id,
-    fromMe: m.key.fromMe,
-    text: m.message?.conversation || m.message?.extendedTextMessage?.text || '',
-    timestamp: m.messageTimestamp,
-    sender: m.key.remoteJid,
-  }));
-}
-
-export async function markMessageAsRead(sessionId, jid, ids) {
-  const session = sessions.get(sessionId);
-  if (!session) throw new Error('Session not found');
-  const { socket } = session;
-
-  for (const id of ids) {
-    try {
-      await socket.readMessages([ { remoteJid: jid, id, participant: jid } ]);
-    } catch (error) {
-      logger.warn(`Failed to read message ${id}: ${error.message}`);
-    }
+    const user = result.rows[0];
+    const token = jwt.sign({ userId: user.id, username: user.username }, process.env.JWT_SECRET || 'dev-secret', { expiresIn: '7d' });
+    res.status(201).json({ user, token });
+  } catch (error) {
+    if (error.code === '23505') return res.status(409).json({ error: 'User already exists' });
+    next(error);
   }
+});
 
-  return { ok: true };
-}
+router.post('/login', async (req, res, next) => {
+  try {
+    const { email, password } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
 
-export async function addReaction(sessionId, jid, messageId, emoji = '👍') {
-  const session = sessions.get(sessionId);
-  if (!session) throw new Error('Session not found');
-  const { socket } = session;
+    const result = await query('SELECT * FROM users WHERE email = $1', [email]);
+    const user = result.rows[0];
+    if (!user) return res.status(401).json({ error: 'Invalid credentials' });
 
-  await socket.sendMessage(jid, {
-    react: {
-      text: emoji,
-      key: { remoteJid: jid, id: messageId, fromMe: false }
-    }
-  });
+    const valid = await bcryptjs.compare(password, user.password_hash);
+    if (!valid) return res.status(401).json({ error: 'Invalid credentials' });
 
-  return { ok: true };
-}
-
-export async function setTypingIndicator(sessionId, jid, enabled = true) {
-  const session = sessions.get(sessionId);
-  if (!session) throw new Error('Session not found');
-  const { socket } = session;
-
-  if (enabled) {
-    await socket.sendPresenceUpdate('composing', jid);
-  } else {
-    await socket.sendPresenceUpdate('paused', jid);
+    const token = jwt.sign({ userId: user.id, username: user.username }, process.env.JWT_SECRET || 'dev-secret', { expiresIn: '7d' });
+    res.json({ user: { id: user.id, username: user.username, email: user.email }, token });
+  } catch (error) {
+    next(error);
   }
+});
 
-  return { ok: true };
-}
+export const verifyToken = (req, res, next) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) return res.status(401).json({ error: 'No token' });
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'dev-secret');
+    req.userId = decoded.userId;
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Invalid token' });
+  }
+};
 
-export async function getConnectionStatus(sessionId) {
-  const session = sessions.get(sessionId);
-  if (!session) return { connected: false, qr: null };
-  return {
-    connected: session.meta.connected,
-    qr: session.meta.qr,
-  };
-}
-
-export async function disconnectSession(sessionId) {
-  const session = sessions.get(sessionId);
-  if (!session) return { ok: true };
-  session.socket.ws.close();
-  sessions.delete(sessionId);
-  return { ok: true };
-}
+export default router;
